@@ -69,9 +69,11 @@ function ensureScoreRecord(studentId, subjectId, classArmId, sessionId, termId){
    but contribute 0 to the total and are flagged separately. */
 function computeSubjectTotal(rec, scheme){
   var total = 0, missing = [], hasAbsent = false, hasExcused = false, anyEntered = false;
-  if (rec && rec.attendanceState==="ABSENT"){ return { total:0, isComplete:true, missingComponents:[], hasAbsent:true, hasExcused:false, anyEntered:false }; }
-  if (rec && rec.attendanceState==="EXCUSED"){ return { total:0, isComplete:true, missingComponents:[], hasAbsent:false, hasExcused:true, anyEntered:false }; }
+  var enteredWeight = 0, totalWeight = 0;
+  if (rec && rec.attendanceState==="ABSENT"){ return { total:0, isComplete:true, missingComponents:[], hasAbsent:true, hasExcused:false, anyEntered:false, projectedTotal:null }; }
+  if (rec && rec.attendanceState==="EXCUSED"){ return { total:0, isComplete:true, missingComponents:[], hasAbsent:false, hasExcused:true, anyEntered:false, projectedTotal:null }; }
   scheme.components.filter(function(c){return c.active;}).forEach(function(c){
+    totalWeight += c.weight;
     var v = rec ? rec.components[c.id] : undefined;
     if (v === SCORE_STATES.ABSENT){ hasAbsent = true; return; }
     if (v === SCORE_STATES.EXCUSED){ hasExcused = true; return; }
@@ -79,17 +81,29 @@ function computeSubjectTotal(rec, scheme){
     var num = Number(v);
     if (isNaN(num)) { missing.push(c.name); return; }
     anyEntered = true;
+    enteredWeight += c.weight;
     var weighted = (num / c.maxScore) * c.weight;
     total += weighted;
   });
   total = Math.round(total * 100) / 100;
+  var isComplete = missing.length === 0;
+  // PROVISIONAL "so far" total: the marks earned so far, scaled up to the full
+  // mark scheme (e.g. 12/20 + 12/20 on CA gives 60 out of 100). Lets averages
+  // and positions start reading while scores are still being entered. For a
+  // finished subject it is exactly the normal total.
+  var projectedTotal = null;
+  if (isComplete && !hasAbsent && !hasExcused){ projectedTotal = total; }
+  else if (anyEntered && !hasAbsent && !hasExcused && enteredWeight > 0){
+    projectedTotal = Math.round(total * (totalWeight / enteredWeight) * 100) / 100;
+  }
   return {
     total: total,
-    isComplete: missing.length === 0,
+    isComplete: isComplete,
     missingComponents: missing,
     hasAbsent: hasAbsent,
     hasExcused: hasExcused,
-    anyEntered: anyEntered
+    anyEntered: anyEntered,
+    projectedTotal: projectedTotal
   };
 }
 
@@ -100,11 +114,24 @@ function studentsInClassArm(classArmId, includeInactive){
   });
 }
 
+/* ADMIN SWITCH-OFF: a subject can be switched off for one class (for one term,
+   or every term of a session) when that class simply does not take it - e.g.
+   Hausa for two of the Primary classes. subject.notTaken is a list of
+   {classArmId, termId}. Nothing is deleted: scores already entered stay
+   stored and return if the switch is removed. termId defaults to the
+   currently selected term. */
+function subjectOffForClass(subject, classArmId, termId){
+  if (!subject || !subject.notTaken || !subject.notTaken.length) return false;
+  var t = termId || state.currentTermId;
+  return subject.notTaken.some(function(x){ return x.classArmId === classArmId && x.termId === t; });
+}
+
 /* subjects applicable to a class-arm in general (used for class-level lists
    like "which subjects does this class have" - not tied to one student) */
-function subjectsForClassArm(classArm){
+function subjectsForClassArm(classArm, termId){
   return state.subjects.filter(function(su){
     if (!su.active) return false;
+    if (subjectOffForClass(su, classArm.id, termId)) return false;
     var sectionOk = su.sectionIds.indexOf(classArm.sectionId) > -1;
     if (!sectionOk) return false;
     if (su.departmentIds && su.departmentIds.length){
@@ -121,6 +148,13 @@ function subjectsForClassArm(classArm){
    department match, so students who've only had a Department set (not yet
    fine-tuned subject-by-subject) still work sensibly. */
 function studentTakesSubject(student, subject){
+  // Religion group: Islamic Studies and CRK. A subject can be limited to one
+  // group; a student belongs to the CRK group only if marked CRK, otherwise
+  // they are in the Islamic Studies group (the school default).
+  if (subject.religiousTrack){
+    var track = student.religiousTrack || "ISLAMIC";
+    if (track !== subject.religiousTrack) return false;
+  }
   if (!subject.departmentIds || !subject.departmentIds.length) return true;
   if (student.subjectIds !== undefined && student.subjectIds !== null){
     return student.subjectIds.indexOf(subject.id) > -1;
@@ -137,18 +171,20 @@ function studentTakesSubject(student, subject){
    restricted to one or more departments only applies to students who
    personally take it, regardless of what department (if any) the class
    itself is tagged with. */
-function subjectsForStudent(student, classArm){
+function subjectsForStudent(student, classArm, termId){
   return state.subjects.filter(function(su){
     if (!su.active) return false;
+    if (subjectOffForClass(su, classArm.id, termId)) return false;
     if (su.sectionIds.indexOf(classArm.sectionId) === -1) return false;
     return studentTakesSubject(student, su);
   }).sort(function(a,b){ return (a.order||0)-(b.order||0); });
 }
 
 /* Which students in a class-arm actually take a given subject. */
-function studentsForSubject(subject, classArmId){
+function studentsForSubject(subject, classArmId, termId){
+  if (subjectOffForClass(subject, classArmId, termId)) return [];
   var all = studentsInClassArm(classArmId);
-  if (!subject.departmentIds || !subject.departmentIds.length) return all;
+  if ((!subject.departmentIds || !subject.departmentIds.length) && !subject.religiousTrack) return all;
   return all.filter(function(stu){ return studentTakesSubject(stu, subject); });
 }
 
@@ -160,21 +196,26 @@ function computeSubjectClassResults(classArmId, subjectId, sessionId, termId){
   var subject = byId(state.subjects, subjectId);
   var scheme = getAssessmentScheme(subject, classArm);
   var grading = getGradingScheme(subject, classArm);
-  var students = studentsForSubject(subject, classArmId);
+  var students = studentsForSubject(subject, classArmId, termId);
 
   var rows = students.map(function(stu){
     var rec = getScoreRecord(stu.id, subjectId, classArmId, sessionId, termId);
     var calc = computeSubjectTotal(rec, scheme);
-    var band = calc.isComplete && !calc.hasAbsent && !calc.hasExcused ? gradeFor(calc.total, grading) : { grade:"-", remark:"", point:null };
-    return { student: stu, rec: rec, calc: calc, grade: band.grade, remark: band.remark };
+    var final = calc.isComplete && !calc.hasAbsent && !calc.hasExcused;
+    var provisional = !final && calc.projectedTotal !== null;
+    var shownTotal = final ? calc.total : (provisional ? calc.projectedTotal : null);
+    var band = shownTotal !== null ? gradeFor(shownTotal, grading) : { grade:"-", remark:"", point:null };
+    return { student: stu, rec: rec, calc: calc, grade: band.grade, remark: band.remark, provisional: provisional, shownTotal: shownTotal };
   });
 
-  var completeRows = rows.filter(function(r){ return r.calc.isComplete && !r.calc.hasAbsent && !r.calc.hasExcused; });
-  var classAverage = completeRows.length
-    ? Math.round((completeRows.reduce(function(a,r){return a+r.calc.total;},0) / completeRows.length) * 100) / 100
+  // Averages and positions start reading as soon as scores are entered
+  // (provisional rows are included); once a subject is complete the numbers are final.
+  var scoredRows = rows.filter(function(r){ return r.shownTotal !== null; });
+  var classAverage = scoredRows.length
+    ? Math.round((scoredRows.reduce(function(a,r){return a+r.shownTotal;},0) / scoredRows.length) * 100) / 100
     : null;
 
-  assignPositions(rows, function(r){ return r.calc.isComplete && !r.calc.hasAbsent && !r.calc.hasExcused ? r.calc.total : null; });
+  assignPositions(rows, function(r){ return r.shownTotal; });
 
   return { classArm: classArm, subject: subject, scheme: scheme, grading: grading, rows: rows, classAverage: classAverage };
 }
@@ -210,31 +251,102 @@ function assignPositions(rows, valueFn){
 function computeStudentOverall(studentId, classArmId, sessionId, termId){
   var classArm = byId(state.classArms, classArmId);
   var student = byId(state.students, studentId);
-  var applicable = subjectsForStudent(student, classArm);
+  var applicable = subjectsForStudent(student, classArm, termId);
   var subjectRows = applicable.map(function(subject){
     var scheme = getAssessmentScheme(subject, classArm);
     var grading = getGradingScheme(subject, classArm);
     var rec = getScoreRecord(studentId, subject.id, classArmId, sessionId, termId);
     var calc = computeSubjectTotal(rec, scheme);
-    var band = calc.isComplete && !calc.hasAbsent && !calc.hasExcused ? gradeFor(calc.total, grading) : { grade:"-", remark:"", point:null };
-    return { subject: subject, calc: calc, grade: band.grade, remark: band.remark };
+    var final = calc.isComplete && !calc.hasAbsent && !calc.hasExcused;
+    var provisional = !final && calc.projectedTotal !== null;
+    var shownTotal = final ? calc.total : (provisional ? calc.projectedTotal : null);
+    var band = shownTotal !== null ? gradeFor(shownTotal, grading) : { grade:"-", remark:"", point:null };
+    return { subject: subject, calc: calc, grade: band.grade, remark: band.remark, provisional: provisional, shownTotal: shownTotal };
   });
 
   var forAverage = subjectRows.filter(function(r){ return r.subject.includeInAverage; });
   var complete = forAverage.filter(function(r){ return r.calc.isComplete && !r.calc.hasAbsent && !r.calc.hasExcused; });
-  var grandTotal = complete.reduce(function(a,r){ return a + r.calc.total; }, 0);
-  var average = complete.length ? Math.round((grandTotal / complete.length) * 100) / 100 : null;
+  var counted = forAverage.filter(function(r){ return r.shownTotal !== null; });
+  var grandTotal = counted.reduce(function(a,r){ return a + r.shownTotal; }, 0);
+  var average = counted.length ? Math.round((grandTotal / counted.length) * 100) / 100 : null;
   var allComplete = forAverage.length > 0 && complete.length === forAverage.length;
 
+  // "provisional" = the average/position are based on scores entered so far,
+  // not yet a finished term result.
   return { subjectRows: subjectRows, grandTotal: Math.round(grandTotal*100)/100, average: average, allComplete: allComplete,
-           totalSubjects: forAverage.length, completedSubjects: complete.length };
+           provisional: average !== null && !allComplete,
+           totalSubjects: forAverage.length, completedSubjects: complete.length, countedSubjects: counted.length };
+}
+
+/* True when EVERY student who takes this subject in this class has all score
+   parts entered (or is marked Absent/Excused). Used so dashboards count a
+   subject as done only when it really is, not merely because a teacher
+   pressed Submit. */
+function isSubjectResultComplete(classArmId, subjectId, sessionId, termId){
+  var classArm = byId(state.classArms, classArmId);
+  var subject = byId(state.subjects, subjectId);
+  if (!classArm || !subject) return false;
+  var scheme = getAssessmentScheme(subject, classArm);
+  var eligible = studentsForSubject(subject, classArmId, termId);
+  if (!eligible.length) return false;
+  return eligible.every(function(stu){
+    var rec = getScoreRecord(stu.id, subjectId, classArmId, sessionId, termId);
+    return computeSubjectTotal(rec, scheme).isComplete;
+  });
+}
+
+/* HOW MUCH OF THE MARKS ARE RECORDED for one subject in one class.
+   A score column (CA1, CA2, Exam...) counts as recorded only when EVERY
+   student who takes the subject has a value in it (or is marked
+   Absent/Excused). The recorded percentage is the weight of those columns
+   out of the whole scheme, so with CA1 = 20 of 100, a teacher who has
+   finished CA1 only has recorded 20%, with 80% remaining. */
+function computeSubjectProgress(classArmId, subjectId, sessionId, termId){
+  var classArm = byId(state.classArms, classArmId);
+  var subject = byId(state.subjects, subjectId);
+  var empty = { components:[], students:0, totalWeight:0, recordedWeight:0, percentRecorded:0, percentRemaining:100 };
+  if (!classArm || !subject) return empty;
+  var scheme = getAssessmentScheme(subject, classArm);
+  var students = studentsForSubject(subject, classArmId, termId);
+  var comps = scheme.components.filter(function(c){return c.active;}).sort(function(a,b){return a.order-b.order;});
+  var totalWeight = comps.reduce(function(a,c){return a + c.weight;}, 0);
+  var parts = comps.map(function(c){
+    var done = students.filter(function(stu){
+      var rec = getScoreRecord(stu.id, subjectId, classArmId, sessionId, termId);
+      if (!rec) return false;
+      if (rec.attendanceState === "ABSENT" || rec.attendanceState === "EXCUSED") return true;
+      var v = rec.components[c.id];
+      if (v === SCORE_STATES.ABSENT || v === SCORE_STATES.EXCUSED) return true;
+      if (v === undefined || v === null || v === "") return false;
+      return !isNaN(Number(v));
+    }).length;
+    return { id:c.id, name:c.name, weight:c.weight, done:done, total:students.length,
+             complete: students.length > 0 && done === students.length };
+  });
+  var recordedWeight = parts.filter(function(p){return p.complete;}).reduce(function(a,p){return a + p.weight;}, 0);
+  var pct = totalWeight > 0 ? Math.round((recordedWeight / totalWeight) * 100) : 0;
+  return { components: parts, students: students.length, totalWeight: totalWeight, recordedWeight: recordedWeight,
+           percentRecorded: pct, percentRemaining: 100 - pct };
+}
+
+/* What the Form Teacher should see for a subject: once the subject is fully
+   submitted the live figure (100%); before that, the progress the subject
+   teacher last SUBMITTED (not whatever they have typed since). */
+function submittedProgressFor(status, progress, snapshot){
+  var full = ["SUBMITTED","APPROVED","ADMIN_REVIEW","PUBLISHED","LOCKED"].indexOf(status) > -1;
+  if (full) return { percent: progress.percentRecorded, remaining: progress.percentRemaining, names: progress.components.filter(function(p){return p.complete;}).map(function(p){return p.name;}), submitted: true };
+  if (snapshot) return { percent: snapshot.percent, remaining: 100 - snapshot.percent, names: snapshot.names || [], submitted: true, at: snapshot.at };
+  return { percent: 0, remaining: 100, names: [], submitted: false };
 }
 
 /* Whole-class overview used by Form Teacher review + Admin approval screens */
 function computeClassOverview(classArmId, sessionId, termId){
   var classArm = byId(state.classArms, classArmId);
-  var subjects = subjectsForClassArm(classArm);
   var students = studentsInClassArm(classArmId);
+  // A religion group (CRK / Islamic Studies) is listed only where some student takes it.
+  var subjects = subjectsForClassArm(classArm, termId).filter(function(su){
+    return !su.religiousTrack || students.some(function(stu){ return studentTakesSubject(stu, su); });
+  });
 
   var subjectStatuses = subjects.map(function(su){
     var key = [classArmId, su.id, sessionId, termId].join("::");
@@ -242,25 +354,31 @@ function computeClassOverview(classArmId, sessionId, termId){
       return a.subjectId===su.id && a.classArmId===classArmId && a.active && a.sessionId===sessionId && a.termId===termId;
     })[0];
     var status = state.classSubjectStatus[key] || (teacherAssign ? "PENDING" : "UNASSIGNED");
-    var eligible = studentsForSubject(su, classArmId);
+    var eligible = studentsForSubject(su, classArmId, termId);
     var entered = eligible.filter(function(stu){
       var rec = getScoreRecord(stu.id, su.id, classArmId, sessionId, termId);
       return rec && (Object.keys(rec.components).length > 0);
     }).length;
+    var progress = computeSubjectProgress(classArmId, su.id, sessionId, termId);
+    var snapshot = (state.subjectProgress || {})[key] || null;
     return { subject: su, status: status, teacherId: teacherAssign ? teacherAssign.teacherId : null,
-              entered: entered, totalStudents: eligible.length };
+              entered: entered, totalStudents: eligible.length,
+              complete: isSubjectResultComplete(classArmId, su.id, sessionId, termId),
+              progress: progress, submitted: submittedProgressFor(status, progress, snapshot) };
   });
 
   var overallRows = students.map(function(stu){
     var overall = computeStudentOverall(stu.id, classArmId, sessionId, termId);
     return { student: stu, overall: overall };
   });
-  assignPositions(overallRows, function(r){ return r.overall.allComplete ? r.overall.average : null; });
+  // Positions and the class average start reading as soon as scores are entered
+  // (provisional until a student's subjects are all complete).
+  assignPositions(overallRows, function(r){ return r.overall.average; });
 
   var classAverage = null;
-  var completeOverall = overallRows.filter(function(r){ return r.overall.allComplete; });
-  if (completeOverall.length){
-    classAverage = Math.round((completeOverall.reduce(function(a,r){return a+r.overall.average;},0)/completeOverall.length)*100)/100;
+  var scoredOverall = overallRows.filter(function(r){ return r.overall.average !== null; });
+  if (scoredOverall.length){
+    classAverage = Math.round((scoredOverall.reduce(function(a,r){return a+r.overall.average;},0)/scoredOverall.length)*100)/100;
   }
 
   return { classArm: classArm, subjects: subjects, subjectStatuses: subjectStatuses, students: overallRows, classAverage: classAverage };

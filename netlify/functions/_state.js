@@ -86,6 +86,7 @@ const MERGE_BY_ID_COLLECTIONS = [
 ];
 const MERGE_BY_KEY_MAPS = [
   "classSubjectStatus", "classApproval", "studentComments", "domainScores", "attendance",
+  "subjectProgress",
 ];
 
 function mergeArraysById(serverArr, localArr) {
@@ -330,6 +331,11 @@ function buildAuthorizedState(auth, serverState, payload, wasStale) {
     serverState.classApproval, payload.classApproval,
     (key) => isMyFormClassArm(key.split("::")[0]),
     publishGateForApprovalObject(canPublish, canReopen)
+  );
+  // "Progress submitted" notes: only the teacher assigned to that subject/class may write them.
+  finalState.subjectProgress = overlayMapByKey(
+    serverState.subjectProgress, payload.subjectProgress,
+    (key) => { const [classArmId, subjectId] = key.split("::"); return isMySubjectClassPair(subjectId, classArmId); }
   );
   ["studentComments", "domainScores", "attendance"].forEach((mapKey) => {
     finalState[mapKey] = overlayMapByKey(serverState[mapKey], payload[mapKey], (key) => {

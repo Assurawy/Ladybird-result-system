@@ -2,6 +2,28 @@
    11 - FORM TEACHER CLASS REVIEW
    ========================================================================== */
 
+/* Per-subject "marks submitted" display: a bar plus "Submitted 20% · Remaining 80%".
+   Before the subject is fully submitted it shows what the subject teacher last
+   SUBMITTED; once submitted/approved/published it shows the live figure, so the
+   remaining percentage stays visible before AND after approval. */
+function progressCellHtml(s){
+  if (s.status === "UNASSIGNED") return '<span class="muted">—</span>';
+  var p = s.submitted;
+  var pct = Math.max(0, Math.min(100, p.percent));
+  var names = (p.names && p.names.length) ? ' <span class="muted small">('+escapeHtml(p.names.join(", "))+')</span>' : '';
+  var label = p.submitted ? ('Submitted <strong>'+pct+'%</strong>'+names+' &middot; Remaining <strong>'+(100-pct)+'%</strong>') : '<span class="muted">Nothing submitted yet &middot; Remaining <strong>100%</strong></span>';
+  return '<div class="progress-bar" title="'+pct+'% submitted"><span style="width:'+pct+'%"></span></div><div class="small">'+label+'</div>';
+}
+
+/* Whole-class figure: the average of every subject's submitted percentage. */
+function classMarksSubmittedText(ov){
+  var rows = ov.subjectStatuses.filter(function(s){return s.status !== "UNASSIGNED";});
+  if (!rows.length) return "—";
+  var sum = rows.reduce(function(a,s){return a + Math.max(0, Math.min(100, s.submitted.percent));}, 0);
+  var pct = Math.round(sum / rows.length);
+  return pct+"% submitted · "+(100-pct)+"% remaining";
+}
+
 function renderFormReviewView(){
   var user = state.currentUser;
   var vp = state.viewParams || {};
@@ -25,6 +47,7 @@ function renderFormReviewView(){
     var canAct = (s.status==="SUBMITTED") && (isFormTeacherOf(user, classArmId) || isWholeSchoolRole(user.role));
     return '<tr><td>'+escapeHtml(s.subject.name)+'</td><td>'+escapeHtml(s.teacherId?userName(s.teacherId):"Unassigned")+'</td>'+
       '<td>'+s.entered+' / '+s.totalStudents+'</td>'+
+      '<td>'+progressCellHtml(s)+'</td>'+
       '<td><span class="status-badge status-'+s.status.toLowerCase()+'">'+statusLabel(s.status)+'</span></td>'+
       '<td class="actions-cell">'+(canAct ? '<button class="btn btn-sm btn-secondary" onclick="returnSubjectForCorrection(\''+classArmId+'\',\''+s.subject.id+'\')">Return</button>'+
         '<button class="btn btn-sm btn-primary" onclick="approveSubjectResult(\''+classArmId+'\',\''+s.subject.id+'\')">Approve</button>' : '')+'</td></tr>';
@@ -42,8 +65,8 @@ function renderFormReviewView(){
     var photoHtml = stu.photo ? '<img src="'+stu.photo+'" class="avatar-photo avatar-xs"/>' : '<div class="avatar-photo avatar-xs avatar-fallback">'+escapeHtml(stu.name[0])+'</div>';
     return '<tr>'+
       '<td class="sticky-col">'+photoHtml+' '+escapeHtml(stu.name)+'</td>'+
-      '<td>'+(row.overall.average!==null?row.overall.average:'<span class="muted">—</span>')+'</td>'+
-      '<td>'+(row.position||'—')+'</td>'+
+      '<td>'+(row.overall.average!==null?row.overall.average+(row.overall.provisional?'*':''):'<span class="muted">—</span>')+'</td>'+
+      '<td>'+(row.position?row.position+(row.overall.provisional?'*':''):'—')+'</td>'+
       '<td><button class="btn btn-sm btn-ghost" onclick="openCommentEditor(\''+stu.id+'\')">'+(c.formTeacherComment?'Edit Comment':'Add Comment')+'</button></td>'+
       '<td><button class="btn btn-sm btn-ghost" onclick="openFeesEditor(\''+stu.id+'\')">'+(c.nextFees||c.examFee?'Edit Fees':'Set Fees')+'</button></td>'+
       '<td><button class="btn btn-sm btn-ghost" onclick="openDomainEditor(\''+stu.id+'\')">Skills/Behaviour</button></td>'+
@@ -58,11 +81,12 @@ function renderFormReviewView(){
     statCard("Students", ov.students.length)+
     statCard("Class Average", ov.classAverage!==null?ov.classAverage+"%":"—")+
     statCard("Class Status", statusLabel(approval.status), approval.status==="FORM_APPROVED"?"good":"warn")+
+    statCard("Marks submitted", classMarksSubmittedText(ov), "")+
   '</div>'+
   '<div class="card">'+
     '<div class="card-header"><h3>Subject Submission Status</h3></div>'+
     (unassignedSubjects.length ? '<div class="banner banner-warn">'+unassignedSubjects.length+' subject(s) have no teacher assigned yet: '+unassignedSubjects.map(function(s){return escapeHtml(s.subject.name);}).join(", ")+'. Ask Admin to assign a teacher.</div>' : '')+
-    '<div class="table-wrap"><table class="data-table"><thead><tr><th>Subject</th><th>Teacher</th><th>Entered</th><th>Status</th><th></th></tr></thead><tbody>'+subjectRows+'</tbody></table></div>'+
+    '<div class="table-wrap"><table class="data-table"><thead><tr><th>Subject</th><th>Teacher</th><th>Entered</th><th>Marks submitted</th><th>Status</th><th></th></tr></thead><tbody>'+subjectRows+'</tbody></table></div>'+
   '</div>'+
   '<div class="card">'+
     '<div class="card-header"><h3>Students — Comments, Fees &amp; Ratings</h3></div>'+
@@ -93,7 +117,7 @@ function approveClass(classArmId){
   var key = [classArmId, state.currentSessionId, state.currentTermId].join("::");
   state.classApproval[key] = { status:"FORM_APPROVED", reviewedBy: state.currentUser.id, reviewedAt: Date.now() };
   // move all approved subjects into ADMIN_REVIEW so principal/admin queue picks them up
-  subjectsForClassArm(byId(state.classArms, classArmId)).forEach(function(su){
+  subjectsForClassArm(byId(state.classArms, classArmId), state.currentTermId).forEach(function(su){
     var k = [classArmId, su.id, state.currentSessionId, state.currentTermId].join("::");
     if (state.classSubjectStatus[k]==="APPROVED") state.classSubjectStatus[k] = "ADMIN_REVIEW";
   });

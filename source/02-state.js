@@ -239,7 +239,7 @@ function loadState(callback){
           formTeacherAssignments:[], commentTemplates:[], signatures:[],
           affectiveDomains:[], psychomotorDomains:[], customFieldDefs:[],
           reportTemplates:[], auditLog:[], notifications:[],
-          classSubjectStatus:{}, classApproval:{}, studentComments:{},
+          classSubjectStatus:{}, subjectProgress:{}, classApproval:{}, studentComments:{},
           domainScores:{}, attendance:{}, school:{}
         }, incoming);
         state.currentUser = null; state.view = "login"; state.viewParams = {};
@@ -548,7 +548,7 @@ function wipeAllData(){
   var keepUser = state.currentUser;
   state = seedState();
   state.students = []; state.scores = []; state.studentComments = {}; state.classApproval = {};
-  state.classSubjectStatus = {}; state.auditLog = []; state.isDemoData = false;
+  state.classSubjectStatus = {}; state.subjectProgress = {}; state.auditLog = []; state.isDemoData = false;
   state.currentUser = keepUser;
   persistNow();
   renderApp();

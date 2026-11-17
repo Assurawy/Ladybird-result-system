@@ -53,7 +53,7 @@ function publishClassCore(classArmId){
   var user = state.currentUser;
   var key = [classArmId, state.currentSessionId, state.currentTermId].join("::");
   state.classApproval[key] = Object.assign(state.classApproval[key]||{}, { status:"PUBLISHED", publishedBy:user.id, publishedAt: Date.now() });
-  subjectsForClassArm(byId(state.classArms, classArmId)).forEach(function(su){
+  subjectsForClassArm(byId(state.classArms, classArmId), state.currentTermId).forEach(function(su){
     var k = [classArmId, su.id, state.currentSessionId, state.currentTermId].join("::");
     if (state.classSubjectStatus[k]==="ADMIN_REVIEW") state.classSubjectStatus[k] = "PUBLISHED";
   });
@@ -102,7 +102,7 @@ function reopenClass(classArmId){
   var prev = state.classApproval[key];
   state.classApproval[key] = Object.assign({}, prev, { status:"FORM_APPROVED", reopenedBy:user.id, reopenedAt: Date.now(), reopenReason: reason,
     previousStatus: prev ? prev.status : null });
-  subjectsForClassArm(byId(state.classArms, classArmId)).forEach(function(su){
+  subjectsForClassArm(byId(state.classArms, classArmId), state.currentTermId).forEach(function(su){
     var k = [classArmId, su.id, state.currentSessionId, state.currentTermId].join("::");
     if (state.classSubjectStatus[k]==="PUBLISHED") state.classSubjectStatus[k] = "ADMIN_REVIEW";
   });

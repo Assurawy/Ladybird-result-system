@@ -295,3 +295,8 @@ a{color:var(--teal-soft);}
   .rc-signatures{ margin-top:14px; }
   .sig-line{ height:24px; }
 }
+
+/* Marks-submitted progress bar (Form Teacher class review) */
+.progress-bar{height:8px;border-radius:6px;background:#E6E9EE;overflow:hidden;min-width:90px;margin-bottom:4px;}
+.progress-bar span{display:block;height:100%;background:var(--good);border-radius:6px;}
+.banner-info{background:#EAF1F6;color:var(--navy);}

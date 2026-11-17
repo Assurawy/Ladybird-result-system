@@ -21,7 +21,7 @@ function renderAdminDashboard(){
 
   var allKeys = [];
   state.classArms.forEach(function(ca){
-    subjectsForClassArm(ca).forEach(function(su){
+    subjectsForClassArm(ca, termId).forEach(function(su){
       allKeys.push([ca.id, su.id, sessionId, termId].join("::"));
     });
   });
@@ -36,7 +36,7 @@ function renderAdminDashboard(){
 
   var gradeDist = {};
   state.classArms.forEach(function(ca){
-    subjectsForClassArm(ca).forEach(function(su){
+    subjectsForClassArm(ca, termId).forEach(function(su){
       var res = computeSubjectClassResults(ca.id, su.id, sessionId, termId);
       res.rows.forEach(function(r){
         if (r.grade && r.grade!=="-"){ gradeDist[r.grade] = (gradeDist[r.grade]||0)+1; }
@@ -51,7 +51,10 @@ function renderAdminDashboard(){
 
   var classArmRows = state.classArms.filter(function(c){return c.active;}).map(function(ca){
     var ov = computeClassOverview(ca.id, sessionId, termId);
-    var doneSubjects = ov.subjectStatuses.filter(function(s){return s.status!=="PENDING";}).length;
+    // "Done" = submitted/approved AND every student's scores are actually entered.
+    var doneSubjects = ov.subjectStatuses.filter(function(s){
+      return s.complete && (s.status==="SUBMITTED" || s.status==="APPROVED" || s.status==="ADMIN_REVIEW" || s.status==="PUBLISHED" || s.status==="LOCKED");
+    }).length;
     return '<tr>'+
       '<td>'+escapeHtml(ca.name)+' <span class="muted">('+sectionName(ca.sectionId)+')</span></td>'+
       '<td>'+ov.students.length+'</td>'+
@@ -78,7 +81,7 @@ function renderAdminDashboard(){
       '<div class="table-wrap"><table class="data-table"><thead><tr><th>Class</th><th>Students</th><th>Subjects Done</th><th>Class Avg</th><th></th></tr></thead><tbody>'+classArmRows+'</tbody></table></div>'+
     '</div>'+
     '<div class="card">'+
-      '<div class="card-header"><h3>Grade Distribution (this term)</h3></div>'+
+      '<div class="card-header"><h3>Grade Distribution (this term, includes provisional)</h3></div>'+
       '<div class="bar-chart">'+gradeBars+'</div>'+
     '</div>'+
   '</div>';
@@ -88,7 +91,11 @@ function renderTeacherDashboard(){
   var user = state.currentUser;
   var sessionId = state.currentSessionId, termId = state.currentTermId;
   var formClasses = myFormClassArmIds(user.id).map(function(id){ return byId(state.classArms, id); }).filter(Boolean);
-  var subjectAssigns = mySubjectAssignments(user.id).filter(function(a){ return a.sessionId===sessionId && a.termId===termId; });
+  var subjectAssigns = mySubjectAssignments(user.id).filter(function(a){
+    if (a.sessionId!==sessionId || a.termId!==termId) return false;
+    var su0 = byId(state.subjects, a.subjectId);
+    return !!su0 && !subjectOffForClass(su0, a.classArmId, termId);   // hide subjects a class does not take this term
+  });
 
   var formCards = formClasses.map(function(ca){
     var ov = computeClassOverview(ca.id, sessionId, termId);
@@ -107,7 +114,7 @@ function renderTeacherDashboard(){
   var subjectRows = subjectAssigns.map(function(a){
     var ca = byId(state.classArms, a.classArmId);
     var su = byId(state.subjects, a.subjectId);
-    var students = studentsInClassArm(a.classArmId);
+    var students = studentsForSubject(su, a.classArmId, termId);   // e.g. only the CRK students for a CRK teacher
     var entered = students.filter(function(stu){
       var rec = getScoreRecord(stu.id, a.subjectId, a.classArmId, sessionId, termId);
       return rec && Object.keys(rec.components).length>0;

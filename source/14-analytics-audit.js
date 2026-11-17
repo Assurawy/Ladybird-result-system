@@ -9,7 +9,7 @@ function renderAnalyticsView(){
 
   var subjectStats = {};
   state.classArms.forEach(function(ca){
-    subjectsForClassArm(ca).forEach(function(su){
+    subjectsForClassArm(ca, termId).forEach(function(su){
       var res = computeSubjectClassResults(ca.id, su.id, sessionId, termId);
       var complete = res.rows.filter(function(r){return r.calc.isComplete && !r.calc.hasAbsent && !r.calc.hasExcused;});
       if (!complete.length) return;
@@ -30,12 +30,17 @@ function renderAnalyticsView(){
 
   var teacherRows = state.users.filter(function(u){return u.role==="TEACHER";}).map(function(t){
     var assigns = state.teacherAssignments.filter(function(a){return a.teacherId===t.id && a.active && a.sessionId===sessionId && a.termId===termId;});
-    var submitted = assigns.filter(function(a){
+    var submittedAssigns = assigns.filter(function(a){
       var key = [a.classArmId, a.subjectId, sessionId, termId].join("::");
       var st = state.classSubjectStatus[key];
       return st && st!=="PENDING" && st!=="RETURNED";
-    }).length;
+    });
+    // Submitted counts only when every student's scores are really entered;
+    // earlier submissions that are missing scores are shown separately.
+    var submitted = submittedAssigns.filter(function(a){ return isSubjectResultComplete(a.classArmId, a.subjectId, sessionId, termId); }).length;
+    var incompleteSubmitted = submittedAssigns.length - submitted;
     return '<tr><td>'+escapeHtml(t.name)+'</td><td>'+assigns.length+'</td><td>'+submitted+'</td>'+
+      '<td>'+(incompleteSubmitted ? '<span class="chip chip-warn">'+incompleteSubmitted+' missing scores</span>' : '<span class="muted">—</span>')+'</td>'+
       '<td>'+(assigns.length ? Math.round((submitted/assigns.length)*100)+"%" : "—")+'</td></tr>';
   }).join("");
 
@@ -46,7 +51,7 @@ function renderAnalyticsView(){
       (subjectRows ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>Subject</th><th>Results</th><th>Average</th><th>Pass Rate</th></tr></thead><tbody>'+subjectRows+'</tbody></table></div>' : '<div class="empty-inline">No complete results yet.</div>')+
     '</div>'+
     '<div class="card"><div class="card-header"><h3>Teacher Submission Status</h3></div>'+
-      (teacherRows ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>Teacher</th><th>Assignments</th><th>Submitted</th><th>%</th></tr></thead><tbody>'+teacherRows+'</tbody></table></div>' : '<div class="empty-inline">No teacher assignments this term.</div>')+
+      (teacherRows ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>Teacher</th><th>Assignments</th><th>Submitted (complete)</th><th>Submitted, scores missing</th><th>%</th></tr></thead><tbody>'+teacherRows+'</tbody></table></div>' : '<div class="empty-inline">No teacher assignments this term.</div>')+
     '</div>'+
   '</div>';
 }

@@ -200,6 +200,7 @@ function seedState(){
     formTeacherAssignments: formTeacherAssignments,
     students: students,
     scores: [], // { id, studentId, subjectId, classArmId, sessionId, termId, components:{compId:val|'ABS'|'EXC'|null}, status }
+    subjectProgress: {},    // key `${classArmId}::${subjectId}::${sessionId}::${termId}` -> {percent, names, at, by}
     classSubjectStatus: {}, // key `${classArmId}_${subjectId}_${sessionId}_${termId}` -> status
     classApproval: {}, // key `${classArmId}_${sessionId}_${termId}` -> {status, reviewedBy, approvedBy, publishedAt}
     studentComments: {}, // key `${studentId}_${sessionId}_${termId}` -> {formTeacherComment, principalComment, nextFees, examFee}

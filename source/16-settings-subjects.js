@@ -8,7 +8,10 @@
    ========================================================================== */
 
 function subjectRowHtml(su){
-  return '<tr><td>'+escapeHtml(su.name)+' <span class="muted small">('+escapeHtml(su.code)+')</span></td>'+
+  var offNow = (su.notTaken || []).filter(function(x){ return x.termId === state.currentTermId; }).length;
+  var notes = (su.religiousTrack==="CRK" ? ' <span class="chip">CRK students only</span>' : (su.religiousTrack==="ISLAMIC" ? ' <span class="chip">Islamic Studies students only</span>' : ''))+
+    (offNow ? ' <span class="chip chip-warn">Off for '+offNow+' class'+(offNow===1?'':'es')+' this term</span>' : '');
+  return '<tr><td>'+escapeHtml(su.name)+' <span class="muted small">('+escapeHtml(su.code)+')</span>'+notes+'</td>'+
     '<td>'+su.sectionIds.map(sectionName).join(", ")+'</td>'+
     '<td>'+(su.core?'<span class="chip chip-good">Core</span>':'<span class="chip">Elective</span>')+'</td>'+
     '<td>'+(su.includeInAverage?"Yes":"No")+' / '+(su.includeInRanking?"Yes":"No")+'</td>'+
@@ -60,6 +63,25 @@ function openSubjectForm(subjectId, presetDeptId){
     return '<label class="check-chip"><input type="checkbox" value="'+d.id+'" class="subj-dept-check" '+(checked?'checked':'')+'/> '+escapeHtml(d.name)+' ('+escapeHtml(sectionName(d.sectionId))+')</label>';
   }).join("");
 
+  // Classes that do NOT take this subject (per term of the selected session)
+  var offBlock = '';
+  if (su){
+    var sessTerms = state.terms.filter(function(t){ return t.sessionId === state.currentSessionId; });
+    var offClasses = state.classArms.filter(function(c){ return c.active && su.sectionIds.indexOf(c.sectionId) > -1; });
+    var offRows = offClasses.map(function(c){
+      var chips = sessTerms.map(function(t){
+        var isOff = (su.notTaken || []).some(function(x){ return x.classArmId === c.id && x.termId === t.id; });
+        return '<label class="check-chip"><input type="checkbox" class="subj-off-check" data-cls="'+c.id+'" data-term="'+t.id+'" '+(isOff?'checked':'')+'/> '+escapeHtml(t.name)+'</label>';
+      }).join("");
+      return '<div style="margin:6px 0"><strong>'+escapeHtml(c.name)+'</strong><div class="check-chip-group">'+chips+'</div></div>';
+    }).join("");
+    offBlock = '<label class="field-label" style="margin-top:16px">Classes that do NOT take this subject ('+escapeHtml(sessionName(state.currentSessionId))+')</label>'+
+      '<div class="muted small">Tick the term(s) a class does not take it. The subject then disappears for that class in score entry, results, report cards and counts. Nothing is deleted - scores already entered stay saved and return if you untick.</div>'+
+      '<div id="subj-off-wrap">'+(offRows || '<span class="muted small">No classes in the selected sections.</span>')+'</div>';
+  } else {
+    offBlock = '<div class="muted small" style="margin-top:16px">After saving, edit the subject to switch it off for classes that do not take it.</div>';
+  }
+
   var html = ''+
   '<div class="modal-header"><h3>'+(su?"Edit Subject":"Add Subject")+'</h3><button class="icon-btn" onclick="closeModal()">'+ICONS("x")+'</button></div>'+
   '<div class="modal-body">'+
@@ -71,6 +93,11 @@ function openSubjectForm(subjectId, presetDeptId){
         '<option value="true"'+((su?su.core:!presetDeptId)?' selected':'')+'>Core (compulsory)</option>'+
         '<option value="false"'+((su?!su.core:!!presetDeptId)?' selected':'')+'>Elective</option>'+
       '</select></div>'+
+      '<div><label class="field-label">Religion group</label><select class="field-input" id="sub-reli">'+
+        '<option value=""'+((!su||!su.religiousTrack)?' selected':'')+'>Everyone (not a religion subject)</option>'+
+        '<option value="ISLAMIC"'+((su&&su.religiousTrack==="ISLAMIC")?' selected':'')+'>Islamic Studies students only</option>'+
+        '<option value="CRK"'+((su&&su.religiousTrack==="CRK")?' selected':'')+'>CRK students only</option>'+
+      '</select></div>'+
     '</div>'+
     '<label class="field-label" style="margin-top:12px">Applicable Sections *</label><div class="check-chip-group">'+sectionChecks+'</div>'+
     '<label class="field-label" style="margin-top:12px">Applicable Departments (leave blank = Compulsory/General, shown to everyone)</label><div class="check-chip-group">'+(deptChecks||'<span class="muted small">No departments configured.</span>')+'</div>'+
@@ -78,6 +105,7 @@ function openSubjectForm(subjectId, presetDeptId){
       '<div><label class="checkbox-row"><input type="checkbox" id="sub-avg" '+(!su||su.includeInAverage?'checked':'')+'/> Include in average</label></div>'+
       '<div><label class="checkbox-row"><input type="checkbox" id="sub-rank" '+(!su||su.includeInRanking?'checked':'')+'/> Include in ranking</label></div>'+
     '</div>'+
+    offBlock+
   '</div>'+
   '<div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button>'+
     '<button class="btn btn-primary" onclick="saveSubjectForm('+(su?"'"+su.id+"'":"null")+')">Save</button></div>';
@@ -94,10 +122,29 @@ function saveSubjectForm(subjectId){
     passMark: Number(el("sub-pass").value)||0,
     core: el("sub-core").value==="true",
     sectionIds: sectionIds, departmentIds: departmentIds,
+    religiousTrack: el("sub-reli").value,
     includeInAverage: el("sub-avg").checked, includeInRanking: el("sub-rank").checked
   };
   if (subjectId){
-    Object.assign(byId(state.subjects, subjectId), data);
+    var subj = byId(state.subjects, subjectId);
+    var offBoxes = qsa(".subj-off-check");
+    if (offBoxes.length){
+      var shown = {};
+      offBoxes.forEach(function(c){ shown[c.dataset.cls] = true; });
+      var sessTermIds = state.terms.filter(function(t){ return t.sessionId === state.currentSessionId; }).map(function(t){ return t.id; });
+      var before = subj.notTaken || [];
+      var kept = before.filter(function(x){ return !(shown[x.classArmId] && sessTermIds.indexOf(x.termId) > -1); });
+      var added = offBoxes.filter(function(c){ return c.checked; }).map(function(c){ return { classArmId: c.dataset.cls, termId: c.dataset.term }; });
+      var newlyOff = added.filter(function(a){ return !before.some(function(x){ return x.classArmId===a.classArmId && x.termId===a.termId; }); });
+      var hidden = state.scores.filter(function(s){
+        return s.subjectId===subjectId && Object.keys(s.components||{}).length>0 &&
+          newlyOff.some(function(a){ return a.classArmId===s.classArmId && a.termId===s.termId; });
+      }).length;
+      if (hidden && !window.confirm(hidden+" score(s) have already been entered for the class/term you are switching off. They will be hidden from score entry, results and report cards, but NOT deleted - they return if you tick it back on. Continue?")) return;
+      data.notTaken = kept.concat(added);
+      if (newlyOff.length) addAudit(state, "Subject switched off for class", name+" — "+newlyOff.map(function(a){ return classArmName(a.classArmId)+" / "+termName(a.termId); }).join(", "));
+    }
+    Object.assign(subj, data);
     addAudit(state, "Subject edited", name);
   } else {
     state.subjects.push(Object.assign({ id: uid("subj"), order: state.subjects.length+1, active:true }, data));
