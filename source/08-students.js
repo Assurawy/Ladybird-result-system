@@ -33,6 +33,7 @@ function renderStudentsView(){
   var filterSection = vp.filterSection || "";
   var filterClass = vp.filterClass || "";
   var filterStatus = vp.filterStatus || "";
+  var filterReli = vp.filterReli || "";
   var search = vp.search || "";
 
   var arms = state.classArms.filter(function(c){ return c.active && allowedIds.indexOf(c.id)>-1; });
@@ -42,6 +43,8 @@ function renderStudentsView(){
   if (filterSection) students = students.filter(function(s){return s.sectionId===filterSection;});
   if (filterClass) students = students.filter(function(s){return s.classArmId===filterClass;});
   if (filterStatus) students = students.filter(function(s){return s.status===filterStatus;});
+  if (filterReli === "CRK") students = students.filter(function(s){return s.religiousTrack==="CRK";});
+  if (filterReli === "ISLAMIC") students = students.filter(function(s){return s.religiousTrack!=="CRK";});
   if (search) {
     var q = search.toLowerCase();
     students = students.filter(function(s){ return s.name.toLowerCase().indexOf(q)>-1 || s.admissionNo.toLowerCase().indexOf(q)>-1; });
@@ -67,7 +70,7 @@ function renderStudentsView(){
     var photoHtml = stu.photo ? '<img src="'+stu.photo+'" class="avatar-photo"/>' : '<div class="avatar-photo avatar-fallback">'+escapeHtml(stu.name[0])+'</div>';
     return '<tr>'+
       '<td>'+photoHtml+'</td>'+
-      '<td><strong>'+escapeHtml(stu.name)+'</strong><div class="muted small">'+escapeHtml(stu.admissionNo)+'</div></td>'+
+      '<td><strong>'+escapeHtml(stu.name)+'</strong>'+(stu.religiousTrack==="CRK"?' <span class="chip">CRK</span>':'')+'<div class="muted small">'+escapeHtml(stu.admissionNo)+'</div></td>'+
       '<td>'+escapeHtml(stu.gender||"—")+'</td>'+
       '<td>'+escapeHtml(ca?ca.name:"—")+(stu.departmentId?'<div class="muted small">'+escapeHtml(departmentName(stu.departmentId))+'</div>':'')+'</td>'+
       '<td><span class="status-badge status-'+stu.status.toLowerCase()+'">'+stu.status+'</span></td>'+
@@ -92,6 +95,7 @@ function renderStudentsView(){
     '<select onchange="updateStudentFilter(\'filterSection\', this.value)">'+sectionOptions+'</select>'+
     '<select onchange="updateStudentFilter(\'filterClass\', this.value)">'+classOptions+'</select>'+
     '<select onchange="updateStudentFilter(\'filterStatus\', this.value)">'+'<option value="">All Statuses</option>'+statusOptions+'</select>'+
+    '<select onchange="updateStudentFilter(\'filterReli\', this.value)"><option value="">All Religious Studies</option><option value="CRK"'+(filterReli==="CRK"?' selected':'')+'>CRK students only</option><option value="ISLAMIC"'+(filterReli==="ISLAMIC"?' selected':'')+'>Islamic Studies students only</option></select>'+
     '<input type="search" placeholder="Search name or admission no." value="'+escapeHtml(search)+'" oninput="updateStudentFilter(\'search\', this.value)"/>'+
   '</div>'+
   '<div class="card">'+
@@ -164,6 +168,10 @@ function openStudentForm(studentId){
       '<div><label class="field-label">Date of Birth *</label><input type="date" class="field-input" id="f-dob" value="'+(stu?stu.dob:'')+'"/></div>'+
       '<div><label class="field-label">Class / Arm *</label><select class="field-input" id="f-classarm" onchange="onFormClassChange(this.value)">'+classOptions+'</select></div>'+
       '<div id="f-dept-wrap">'+deptOptions+'</div>'+
+      '<div><label class="field-label">Religious Studies</label><select class="field-input" id="f-reli">'+
+        '<option value=""'+((!stu||stu.religiousTrack!=="CRK")?' selected':'')+'>Islamic Studies (default)</option>'+
+        '<option value="CRK"'+((stu&&stu.religiousTrack==="CRK")?' selected':'')+'>CRK (Christian Religious Knowledge)</option>'+
+      '</select></div>'+
       '<div><label class="field-label">Parent/Guardian Phone *</label><input class="field-input" id="f-phone" value="'+escapeHtml(stu?stu.guardianPhone:'')+'"/></div>'+
       '<div><label class="field-label">Status</label><select class="field-input" id="f-status">'+
         ["Active","Inactive","Graduated","Transferred","Repeated"].map(function(s){return '<option value="'+s+'"'+(stu&&stu.status===s?' selected':(!stu&&s==="Active"?' selected':''))+'>'+s+'</option>';}).join("")+
@@ -283,6 +291,7 @@ function saveStudentForm(studentId){
     classArmId: classArmId,
     sectionId: ca.sectionId,
     departmentId: deptEl ? (deptEl.value||null) : null,
+    religiousTrack: el("f-reli") ? el("f-reli").value : "",
     guardianPhone: el("f-phone").value.trim(),
     address: el("f-address").value.trim(),
     status: el("f-status").value
@@ -405,11 +414,11 @@ function renderStudentProfile(){
   var termResultsHtml = state.terms.filter(function(t){return t.sessionId===state.currentSessionId;}).map(function(t){
     var overall = computeStudentOverall(stu.id, stu.classArmId, state.currentSessionId, t.id);
     var rows = overall.subjectRows.map(function(r){
-      var display = r.calc.hasAbsent ? "ABSENT" : r.calc.hasExcused ? "EXCUSED" : (r.calc.isComplete ? r.calc.total : "—");
+      var display = r.calc.hasAbsent ? "ABSENT" : r.calc.hasExcused ? "EXCUSED" : (r.calc.isComplete ? r.calc.total : (r.provisional ? r.shownTotal+"*" : "—"));
       return '<tr><td>'+escapeHtml(r.subject.name)+'</td><td>'+display+'</td><td>'+r.grade+'</td></tr>';
     }).join("");
     return '<div class="card">'+
-      '<div class="card-header"><h3>'+escapeHtml(t.name)+'</h3>'+(overall.average!==null?'<span class="chip chip-good">Average: '+overall.average+'%</span>':'<span class="chip">Incomplete</span>')+'</div>'+
+      '<div class="card-header"><h3>'+escapeHtml(t.name)+'</h3>'+(overall.average!==null?'<span class="chip chip-good">Average: '+overall.average+'%'+(overall.provisional?' (so far)':'')+'</span>':'<span class="chip">No scores yet</span>')+'</div>'+
       (rows ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>Subject</th><th>Score</th><th>Grade</th></tr></thead><tbody>'+rows+'</tbody></table></div>' : '<div class="empty-inline">No scores recorded.</div>')+
     '</div>';
   }).join("");

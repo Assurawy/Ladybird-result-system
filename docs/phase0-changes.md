@@ -15,6 +15,10 @@
 | 10 | Photos: a picture that fails to load on one device can no longer erase its link for everyone; pictures load in the background 6 at a time; a picture is deleted only when someone deliberately removes it. | source/02-state.js |
 | 11 | Repair tool for photos that already disappeared (dry run by default). | scripts/repair-media-links.js, netlify/functions/_r2.js |
 
+| 12 | Averages, positions and class averages start reading as soon as scores are entered, marked * and "PROVISIONAL" until every score is in. | source/04-engine.js, 13-reports.js, 11-form-review.js, 08-students.js, 07-dashboard.js |
+| 13 | A teacher can only Submit a subject when every student has all score parts (or is Absent/Excused). Dashboards count a subject as done only when it really is. | source/10-score-entry.js, 07-dashboard.js, 14-analytics-audit.js |
+| 14 | Religion groups: a subject can be "Islamic Studies students only" or "CRK students only"; each student has a Religious Studies setting (default Islamic Studies). | source/04-engine.js, 08-students.js, 16-settings-subjects.js |
+
 Photo and signature permissions are deliberately UNCHANGED.
 
 Run the automated checks with `npm test`.

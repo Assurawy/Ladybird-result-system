@@ -21,7 +21,7 @@ function world(){
     assessmentSchemes:[{id:"as",sectionIds:["prim"],components:[comp("ca1","CA1",20,20,1),comp("ca2","CA2",20,20,2),comp("ex","Exam",60,60,3)]}],
     gradingSchemes:[{id:"g",sectionIds:["prim"],bands:[{grade:"A",min:75,max:100,remark:"Excellent"},{grade:"F",min:0,max:74,remark:"Fair"}]}],
     students:[{id:"m1",name:"Musa",classArmId:"p1",status:"Active"},{id:"m2",name:"Amina",classArmId:"p1",status:"Active",religiousTrack:"ISLAMIC"},{id:"c1",name:"Grace",classArmId:"p1",status:"Active",religiousTrack:"CRK"},{id:"m3",name:"Sani",classArmId:"p2",status:"Active"}],
-    scores:[], teacherAssignments:[], formTeacherAssignments:[], classSubjectStatus:{}, subjectProgress:{}, classApproval:{}, studentComments:{}, domainScores:{}, attendance:{}, notifications:[], rankingConfig:{tieMethod:"competition"}, auditLog:[], users:[] };
+    scores:[], teacherAssignments:[], formTeacherAssignments:[], classSubjectStatus:{}, subjectProgress:{}, classApproval:{}, studentComments:{}, domainScores:{}, attendance:{}, notifications:[], customFieldDefs:[], rankingConfig:{tieMethod:"competition"}, auditLog:[], users:[] };
 }
 function setScore(ctx, stu, subj, cls, term, comps){
   vm.runInContext(`(function(){ var r=ensureScoreRecord(${JSON.stringify(stu)},${JSON.stringify(subj)},${JSON.stringify(cls)},"s1",${JSON.stringify(term)}); r.components=${JSON.stringify(comps)}; })()`,ctx);
@@ -153,5 +153,40 @@ const ids=(c,expr)=>run(c,`(${expr}).map(function(x){return x.id})`).join();
   t("E7 the subject form shows the class/term switch-off boxes", /subj-off-check/.test(modal) && /Primary 1/.test(modal) && /Second Term/.test(modal) && /checked/.test(modal));
   run(c,'openSubjectForm(null)');
   t("E8 a new subject explains it can be switched off after saving", /After saving, edit the subject/.test(modal));
+}
+
+// ===== F. Marking a student as CRK =====
+{ const c=app(); c.state=world(); let modal=""; run(c,"state=this.state");
+  c.openModal=(h)=>{modal=h;}; c.toast=()=>{}; c.closeModal=()=>{}; c.scheduleSave=()=>{}; c.renderApp=()=>{}; c.alert=()=>{};
+  run(c,`state.users=[{id:"ad",name:"Admin",role:"SUPER_ADMIN",active:true}]; state.currentUser=state.users[0]; state.viewParams={};`);
+  run(c,'openStudentForm("m1")');
+  t("F1 the Edit Student form has the Religious Studies dropdown with a CRK option", /id="f-reli"/.test(modal) && /CRK \(Christian Religious Knowledge\)/.test(modal) && /Islamic Studies \(default\)/.test(modal));
+  run(c,'openStudentForm("c1")');
+  t("F2 a CRK student's form opens with CRK selected", /<option value="CRK" selected>/.test(modal));
+  const form={ "f-name":{value:"Musa"},"f-adm":{value:"LB/1"},"f-gender":{value:"Male"},"f-dob":{value:"2015-01-01"},"f-classarm":{value:"p1"},"f-phone":{value:"08000000000"},"f-address":{value:"Kano"},"f-status":{value:"Active"},"f-reli":{value:"CRK"} };
+  c.el=(id)=>form[id]||null; c.qsa=()=>[];
+  run(c,'saveStudentForm("m1")');
+  t("F3 saving with CRK selected stores the student as CRK", run(c,'byId(state.students,"m1").religiousTrack')==="CRK");
+  t("F4 the CRK subject now includes that student, Islamic Studies does not", ids(c,'studentsForSubject(byId(state.subjects,"crk"),"p1","t1")').split(",").indexOf("m1")>-1 && ids(c,'studentsForSubject(byId(state.subjects,"isl"),"p1","t1")').split(",").indexOf("m1")===-1);
+  form["f-reli"].value=""; run(c,'saveStudentForm("m1")');
+  t("F5 choosing Islamic Studies again puts them back", run(c,'byId(state.students,"m1").religiousTrack')==="" && ids(c,'studentsForSubject(byId(state.subjects,"isl"),"p1","t1")').split(",").indexOf("m1")>-1);
+  run(c,'state.viewParams={}; '); let h=run(c,"renderStudentsView()");
+  t("F6 the student list marks CRK students with a CRK tag", /Grace<\/strong> <span class="chip">CRK<\/span>/.test(h) && !/Musa<\/strong> <span class="chip">CRK/.test(h));
+  run(c,'state.viewParams={filterReli:"CRK"}'); h=run(c,"renderStudentsView()");
+  t("F7 the CRK filter lists only CRK students", /Grace/.test(h) && !/Musa/.test(h) && !/Amina/.test(h));
+}
+
+// ===== G. Report card marks partial results clearly =====
+{ const c=app(); run(c,"state=seedState(); state.scores=[]; state.classSubjectStatus={}; state.users.forEach(function(u){ if(u.role==='SUPER_ADMIN') state.currentUser=u; });");
+  const info=JSON.parse(run(c,'(function(){ var stu=state.students[0]; var ca=byId(state.classArms,stu.classArmId); var subs=subjectsForStudent(stu,ca,state.currentTermId); return JSON.stringify({id:stu.id,ca:ca.id,ses:state.currentSessionId,term:state.currentTermId,subs:subs.map(function(x){return x.id;})}); })()'));
+  const comps=JSON.parse(run(c,'JSON.stringify(getAssessmentScheme(byId(state.subjects,"'+info.subs[0]+'"),byId(state.classArms,"'+info.ca+'")).components.filter(function(x){return x.active;}).map(function(x){return {id:x.id,max:x.maxScore};}))'));
+  const full={}, part={}; comps.forEach((x,i)=>{ full[x.id]=Math.round(x.max*0.7); if(i===0) part[x.id]=Math.round(x.max*0.7); });
+  const put=(subj,vals)=>run(c,`(function(){ var r=ensureScoreRecord("${info.id}","${subj}","${info.ca}","${info.ses}","${info.term}"); r.components=${JSON.stringify(vals)}; })()`);
+  put(info.subs[0], part);
+  let h=""; try{ h=run(c,`generateReportCardHtml("${info.id}","${info.ca}","${info.ses}","${info.term}")`); }catch(e){ h="ERR:"+e.message; }
+  t("G1 a report card built from partial scores says PROVISIONAL and stars the figures", !/ERR:/.test(h) && /PROVISIONAL RESULT/.test(h) && /\d\*/.test(h));
+  info.subs.forEach(su=>put(su, full));
+  try{ h=run(c,`generateReportCardHtml("${info.id}","${info.ca}","${info.ses}","${info.term}")`); }catch(e){ h="ERR:"+e.message; }
+  t("G2 once every subject is complete the PROVISIONAL banner is gone", !/ERR:/.test(h) && !/PROVISIONAL RESULT/.test(h));
 }
 console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail?1:0);
